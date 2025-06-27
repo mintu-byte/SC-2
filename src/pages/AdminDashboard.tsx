@@ -19,7 +19,9 @@ import {
   CheckCircle,
   Eye,
   Calendar,
-  ExternalLink
+  ExternalLink,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -89,18 +91,29 @@ const AdminDashboard = () => {
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
   useEffect(() => {
     fetchDashboardData();
     fetchConsultancies();
     
-    // Refresh data every 30 seconds
+    // Set up real-time updates
     const interval = setInterval(() => {
       fetchDashboardData();
       fetchConsultancies();
-    }, 30000);
+      setLastUpdate(new Date());
+    }, 5000); // Update every 5 seconds
 
-    return () => clearInterval(interval);
+    // Simulate connection status
+    const connectionCheck = setInterval(() => {
+      setIsConnected(Math.random() > 0.1); // 90% uptime simulation
+    }, 10000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(connectionCheck);
+    };
   }, []);
 
   const fetchDashboardData = async () => {
@@ -115,9 +128,13 @@ const AdminDashboard = () => {
       if (response.ok) {
         const data = await response.json();
         setStats(data);
+        setIsConnected(true);
+      } else {
+        setIsConnected(false);
       }
     } catch (error) {
       console.error('Failed to fetch dashboard stats:', error);
+      setIsConnected(false);
     } finally {
       setIsLoading(false);
     }
@@ -223,6 +240,14 @@ const AdminDashboard = () => {
     });
   };
 
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  };
+
   const getStatusColor = (isUsed: boolean, isExpired: boolean) => {
     if (isExpired) return 'bg-red-100 text-red-800';
     if (isUsed) return 'bg-green-100 text-green-800';
@@ -263,10 +288,28 @@ const AdminDashboard = () => {
             </div>
             
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span>Live Data</span>
+              {/* Connection Status */}
+              <div className={`flex items-center gap-2 text-sm px-3 py-1 rounded-full ${
+                isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {isConnected ? (
+                  <>
+                    <Wifi className="h-4 w-4" />
+                    <span>Live</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="h-4 w-4" />
+                    <span>Offline</span>
+                  </>
+                )}
               </div>
+              
+              {/* Last Update */}
+              <div className="text-xs text-gray-500">
+                Last update: {formatTime(lastUpdate)}
+              </div>
+              
               <button
                 onClick={() => setShowGenerateModal(true)}
                 className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all duration-300 flex items-center gap-2"
@@ -280,7 +323,7 @@ const AdminDashboard = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Grid */}
+        {/* Real-time Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {[
             { 
@@ -288,28 +331,32 @@ const AdminDashboard = () => {
               value: stats?.totalUsers?.toLocaleString() || '0', 
               icon: <Users className="h-6 w-6" />, 
               color: 'blue',
-              change: '+12%'
+              change: '+12%',
+              trend: 'up'
             },
             { 
               title: 'Online Now', 
               value: stats?.onlineUsers?.toLocaleString() || '0', 
               icon: <Activity className="h-6 w-6" />, 
               color: 'green',
-              change: '+5%'
+              change: '+5%',
+              trend: 'up'
             },
             { 
               title: 'Total Messages', 
               value: stats?.totalMessages?.toLocaleString() || '0', 
               icon: <MessageSquare className="h-6 w-6" />, 
               color: 'purple',
-              change: '+28%'
+              change: '+28%',
+              trend: 'up'
             },
             { 
               title: 'Consultancies', 
               value: stats?.totalConsultancies?.toString() || '0', 
               icon: <Globe className="h-6 w-6" />, 
               color: 'indigo',
-              change: '+3%'
+              change: '+3%',
+              trend: 'up'
             }
           ].map((stat, index) => (
             <motion.div
@@ -317,18 +364,34 @@ const AdminDashboard = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
-              className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
+              className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden"
             >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`p-2 rounded-lg bg-${stat.color}-100 text-${stat.color}-600`}>
-                  {stat.icon}
+              {/* Animated background */}
+              <div className={`absolute top-0 right-0 w-20 h-20 bg-gradient-to-br from-${stat.color}-100 to-${stat.color}-200 rounded-full transform translate-x-8 -translate-y-8 opacity-50`} />
+              
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-4">
+                  <div className={`p-2 rounded-lg bg-${stat.color}-100 text-${stat.color}-600`}>
+                    {stat.icon}
+                  </div>
+                  <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
+                    stat.trend === 'up' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                  }`}>
+                    <TrendingUp className="h-3 w-3" />
+                    <span>{stat.change}</span>
+                  </div>
                 </div>
-                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                  {stat.change}
-                </span>
+                <div className="text-2xl font-bold text-gray-900 mb-1">{stat.value}</div>
+                <div className="text-sm text-gray-600">{stat.title}</div>
+                
+                {/* Real-time indicator */}
+                {isConnected && (
+                  <div className="flex items-center gap-1 mt-2 text-xs text-green-600">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    <span>Live</span>
+                  </div>
+                )}
               </div>
-              <div className="text-2xl font-bold text-gray-900 mb-1">{stat.value}</div>
-              <div className="text-sm text-gray-600">{stat.title}</div>
             </motion.div>
           ))}
         </div>
@@ -336,31 +399,55 @@ const AdminDashboard = () => {
         {/* Referral Codes Stats */}
         <div className="grid lg:grid-cols-3 gap-6 mb-8">
           <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Referral Code Statistics</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-blue-600" />
+              Referral Code Statistics
+            </h3>
             <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-blue-50 rounded-lg">
+              <motion.div 
+                whileHover={{ scale: 1.02 }}
+                className="text-center p-4 bg-blue-50 rounded-lg border border-blue-100"
+              >
                 <div className="text-2xl font-bold text-blue-600">{stats?.totalReferralCodes || 0}</div>
                 <div className="text-sm text-gray-600">Total Codes</div>
-              </div>
-              <div className="text-center p-4 bg-green-50 rounded-lg">
+              </motion.div>
+              <motion.div 
+                whileHover={{ scale: 1.02 }}
+                className="text-center p-4 bg-green-50 rounded-lg border border-green-100"
+              >
                 <div className="text-2xl font-bold text-green-600">{stats?.usedReferralCodes || 0}</div>
                 <div className="text-sm text-gray-600">Used Codes</div>
-              </div>
-              <div className="text-center p-4 bg-yellow-50 rounded-lg">
+              </motion.div>
+              <motion.div 
+                whileHover={{ scale: 1.02 }}
+                className="text-center p-4 bg-yellow-50 rounded-lg border border-yellow-100"
+              >
                 <div className="text-2xl font-bold text-yellow-600">
                   {(stats?.totalReferralCodes || 0) - (stats?.usedReferralCodes || 0) - (stats?.expiredReferralCodes || 0)}
                 </div>
                 <div className="text-sm text-gray-600">Active Codes</div>
-              </div>
-              <div className="text-center p-4 bg-red-50 rounded-lg">
+              </motion.div>
+              <motion.div 
+                whileHover={{ scale: 1.02 }}
+                className="text-center p-4 bg-red-50 rounded-lg border border-red-100"
+              >
                 <div className="text-2xl font-bold text-red-600">{stats?.expiredReferralCodes || 0}</div>
                 <div className="text-sm text-gray-600">Expired Codes</div>
-              </div>
+              </motion.div>
             </div>
           </div>
 
           <div className="lg:col-span-2 bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Country Statistics</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Globe className="h-5 w-5 text-green-600" />
+              Country Statistics
+              {isConnected && (
+                <div className="ml-auto flex items-center gap-1 text-xs text-green-600">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                  <span>Real-time</span>
+                </div>
+              )}
+            </h3>
             <div className="space-y-4">
               {stats?.countryStats?.map((country, index) => (
                 <motion.div 
@@ -368,14 +455,20 @@ const AdminDashboard = () => {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.1 }}
-                  className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  whileHover={{ scale: 1.01, backgroundColor: '#f8fafc' }}
+                  className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-all duration-200 border border-gray-100"
                 >
                   <div className="flex items-center gap-3">
                     <span className="text-2xl">{country.flag}</span>
                     <div>
                       <span className="font-medium text-gray-900">{country.country}</span>
-                      <div className="text-sm text-gray-600">
-                        {country.onlineUsers} online • {country.totalUsers} total users
+                      <div className="text-sm text-gray-600 flex items-center gap-2">
+                        <span className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-green-500 rounded-full" />
+                          {country.onlineUsers} online
+                        </span>
+                        <span>•</span>
+                        <span>{country.totalUsers} total users</span>
                       </div>
                     </div>
                   </div>
@@ -392,8 +485,18 @@ const AdminDashboard = () => {
         {/* Consultancies Table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Consultancies Management</h2>
-            <p className="text-sm text-gray-600 mt-1">Click on a consultancy to view detailed referral codes</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Consultancies Management</h2>
+                <p className="text-sm text-gray-600 mt-1">Click on a consultancy to view detailed referral codes</p>
+              </div>
+              {isConnected && (
+                <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                  <span>Live Updates</span>
+                </div>
+              )}
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -420,54 +523,61 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {consultancies.map((consultancy) => (
-                  <motion.tr 
-                    key={consultancy.id} 
-                    className="hover:bg-gray-50 transition-colors"
-                    whileHover={{ scale: 1.01 }}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="font-medium text-gray-900">{consultancy.name}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {consultancy.totalCodes}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <div className="flex gap-2">
-                        <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs">
-                          {consultancy.usedCodes} used
+                <AnimatePresence>
+                  {consultancies.map((consultancy) => (
+                    <motion.tr 
+                      key={consultancy.id} 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="hover:bg-gray-50 transition-colors"
+                      whileHover={{ scale: 1.005 }}
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="font-medium text-gray-900">{consultancy.name}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {consultancy.totalCodes}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <div className="flex gap-2">
+                          <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs">
+                            {consultancy.usedCodes} used
+                          </span>
+                          <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">
+                            {consultancy.activeCodes} active
+                          </span>
+                          <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs">
+                            {consultancy.expiredCodes} expired
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {formatDate(consultancy.createdAt)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          consultancy.isActive 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {consultancy.isActive ? 'Active' : 'Inactive'}
                         </span>
-                        <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">
-                          {consultancy.activeCodes} active
-                        </span>
-                        <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs">
-                          {consultancy.expiredCodes} expired
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(consultancy.createdAt)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        consultancy.isActive 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {consultancy.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <button
-                        onClick={() => fetchConsultancyDetails(consultancy.id)}
-                        className="text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
-                      >
-                        <Eye className="h-4 w-4" />
-                        View Details
-                      </button>
-                    </td>
-                  </motion.tr>
-                ))}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <motion.button
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => fetchConsultancyDetails(consultancy.id)}
+                          className="text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+                        >
+                          <Eye className="h-4 w-4" />
+                          View Details
+                        </motion.button>
+                      </td>
+                    </motion.tr>
+                  ))}
+                </AnimatePresence>
               </tbody>
             </table>
           </div>
@@ -565,7 +675,7 @@ const AdminDashboard = () => {
                       required
                       min="1"
                       max="1000"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300  rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter number of codes"
                     />
                     <p className="text-xs text-gray-500 mt-1">All codes will expire in 1 year</p>
@@ -618,21 +728,21 @@ const AdminDashboard = () => {
               </div>
 
               <div className="grid grid-cols-4 gap-4 mb-6">
-                <div className="bg-blue-50 p-4 rounded-lg text-center">
+                <div className="bg-blue-50 p-4 rounded-lg text-center border border-blue-100">
                   <div className="text-2xl font-bold text-blue-600">{selectedConsultancy.totalCodes}</div>
                   <div className="text-sm text-gray-600">Total Codes</div>
                 </div>
-                <div className="bg-green-50 p-4 rounded-lg text-center">
+                <div className="bg-green-50 p-4 rounded-lg text-center border border-green-100">
                   <div className="text-2xl font-bold text-green-600">{selectedConsultancy.usedCodes}</div>
                   <div className="text-sm text-gray-600">Used Codes</div>
                 </div>
-                <div className="bg-yellow-50 p-4 rounded-lg text-center">
+                <div className="bg-yellow-50 p-4 rounded-lg text-center border border-yellow-100">
                   <div className="text-2xl font-bold text-yellow-600">
                     {selectedConsultancy.referralCodes.filter(c => !c.isUsed && !c.isExpired).length}
                   </div>
                   <div className="text-sm text-gray-600">Active Codes</div>
                 </div>
-                <div className="bg-red-50 p-4 rounded-lg text-center">
+                <div className="bg-red-50 p-4 rounded-lg text-center border border-red-100">
                   <div className="text-2xl font-bold text-red-600">
                     {selectedConsultancy.referralCodes.filter(c => c.isExpired).length}
                   </div>

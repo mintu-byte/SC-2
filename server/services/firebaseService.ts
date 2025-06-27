@@ -33,7 +33,10 @@ export const dbPaths = {
   referralCodes: 'referralCodes',
   verifiedUsers: 'verifiedUsers',
   deviceSessions: 'deviceSessions',
-  chatRooms: 'chatRooms'
+  chatRooms: 'chatRooms',
+  userActivity: 'userActivity',
+  roomStats: 'roomStats',
+  globalStats: 'globalStats'
 };
 
 // Save user data under consultancy structure for referral users
@@ -182,7 +185,7 @@ export const saveReferralCodes = async (codes: any[]) => {
   }
 };
 
-export const createUserSession = async (userId: string, deviceId: string, referralCode?: string) => {
+export const createDeviceSession = async (userId: string, deviceId: string, referralCode?: string) => {
   if (!adminDb) return;
   
   const sessionData = {
@@ -230,4 +233,125 @@ export const logoutDevice = async (userId: string) => {
     isActive: false,
     logoutTime: Date.now()
   });
+};
+
+// Real-time activity tracking
+export const updateUserActivity = async (userId: string, country: string) => {
+  if (!adminDb) return;
+  
+  try {
+    const activityPath = `${dbPaths.userActivity}/${userId}`;
+    await adminDb.ref(activityPath).update({
+      lastActive: Date.now(),
+      currentCountry: country,
+      isOnline: true
+    });
+  } catch (error) {
+    console.error('Error updating user activity:', error);
+  }
+};
+
+// Increment message count for room
+export const incrementMessageCount = async (country: string) => {
+  if (!adminDb) return;
+  
+  try {
+    const roomStatsPath = `${dbPaths.roomStats}/${country}`;
+    const snapshot = await adminDb.ref(roomStatsPath).once('value');
+    const currentStats = snapshot.val() || { totalMessages: 0, lastUpdated: Date.now() };
+    
+    await adminDb.ref(roomStatsPath).update({
+      totalMessages: currentStats.totalMessages + 1,
+      lastUpdated: Date.now()
+    });
+  } catch (error) {
+    console.error('Error incrementing message count:', error);
+  }
+};
+
+// Update room statistics
+export const updateRoomStats = async (country: string, activeUsers: number) => {
+  if (!adminDb) return;
+  
+  try {
+    const roomStatsPath = `${dbPaths.roomStats}/${country}`;
+    await adminDb.ref(roomStatsPath).update({
+      activeUsers,
+      lastUpdated: Date.now()
+    });
+  } catch (error) {
+    console.error('Error updating room stats:', error);
+  }
+};
+
+// Save global statistics
+export const saveGlobalStats = async (stats: any) => {
+  if (!adminDb) return;
+  
+  try {
+    await adminDb.ref(dbPaths.globalStats).set({
+      ...stats,
+      lastUpdated: Date.now()
+    });
+  } catch (error) {
+    console.error('Error saving global stats:', error);
+  }
+};
+
+// Get real-time statistics
+export const getRealTimeStats = async () => {
+  if (!adminDb) return null;
+  
+  try {
+    const snapshot = await adminDb.ref(dbPaths.globalStats).once('value');
+    return snapshot.val();
+  } catch (error) {
+    console.error('Error getting real-time stats:', error);
+    return null;
+  }
+};
+
+// Listen to real-time changes
+export const listenToRealTimeStats = (callback: (stats: any) => void) => {
+  if (!adminDb) return () => {};
+  
+  const statsRef = adminDb.ref(dbPaths.globalStats);
+  const listener = statsRef.on('value', (snapshot) => {
+    const stats = snapshot.val();
+    if (stats) {
+      callback(stats);
+    }
+  });
+  
+  return () => statsRef.off('value', listener);
+};
+
+// Listen to user activity
+export const listenToUserActivity = (callback: (activity: any) => void) => {
+  if (!adminDb) return () => {};
+  
+  const activityRef = adminDb.ref(dbPaths.userActivity);
+  const listener = activityRef.on('value', (snapshot) => {
+    const activity = snapshot.val();
+    if (activity) {
+      callback(activity);
+    }
+  });
+  
+  return () => activityRef.off('value', listener);
+};
+
+// Listen to room statistics
+export const listenToRoomStats = (callback: (roomStats: any) => void) => {
+  if (!adminDb) return () => {};
+  
+  const roomStatsRef = adminDb.ref(dbPaths.roomStats);
+  const listener = roomStatsRef.on('value', (snapshot) => {
+    const roomStats = snapshot.val();
+    if (roomStats) {
+      callback(roomStats);
+    }
+  });
+  
+  return () => roomStatsRef.off('value', listener);
 };

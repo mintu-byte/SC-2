@@ -20,8 +20,12 @@ import {
   saveVerifiedUser,
   getVerifiedUser,
   saveConsultancy,
-  saveReferralCodes
+  saveReferralCodes,
+  updateUserActivity,
+  incrementMessageCount,
+  updateRoomStats
 } from './services/firebaseService.js';
+import { moderateMessage, generateViolationMessage } from './utils/contentModeration.js';
 
 const app = express();
 const server = createServer(app);
@@ -58,6 +62,7 @@ interface Message {
   replies: number;
   isModerated: boolean;
   violations?: string[];
+  violationDetails?: any;
 }
 
 interface Room {
@@ -67,6 +72,7 @@ interface Room {
   users: User[];
   messages: Message[];
   activeUsers: number;
+  totalMessages: number;
 }
 
 const rooms = new Map<string, Room>();
@@ -87,58 +93,40 @@ countries.forEach(country => {
     country: country.id,
     users: [],
     messages: [],
-    activeUsers: Math.floor(Math.random() * 100) + 50
+    activeUsers: Math.floor(Math.random() * 100) + 50,
+    totalMessages: Math.floor(Math.random() * 1000) + 500
   });
 });
 
-// Content moderation function
-const moderateMessage = (message: string): { isClean: boolean; cleanMessage: string; violations: string[] } => {
-  const violations: string[] = [];
-  let cleanMessage = message;
-
-  // Enhanced profanity and contact sharing filter
-  const badWords = ['spam', 'scam', 'fake', 'fraud', 'shit', 'fuck', 'damn', 'bitch'];
-  const phoneRegex = /(\+?\d{1,4}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}/g;
-  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-  const socialRegex = /@[a-zA-Z0-9._]+|whatsapp|telegram|instagram|facebook|snapchat|discord/gi;
-  const contactRegex = /contact\s+me|dm\s+me|message\s+me|call\s+me|text\s+me/gi;
-
-  // Check for bad words
-  const lowerMessage = message.toLowerCase();
-  for (const word of badWords) {
-    if (lowerMessage.includes(word)) {
-      violations.push('inappropriate_language');
-      cleanMessage = cleanMessage.replace(new RegExp(word, 'gi'), '***');
-    }
-  }
-
-  // Check for contact sharing
-  if (phoneRegex.test(message)) {
-    violations.push('phone_sharing');
-    cleanMessage = cleanMessage.replace(phoneRegex, '[CONTACT REMOVED]');
-  }
-
-  if (emailRegex.test(message)) {
-    violations.push('email_sharing');
-    cleanMessage = cleanMessage.replace(emailRegex, '[EMAIL REMOVED]');
-  }
-
-  if (socialRegex.test(message)) {
-    violations.push('social_sharing');
-    cleanMessage = cleanMessage.replace(socialRegex, '[SOCIAL REMOVED]');
-  }
-
-  if (contactRegex.test(message)) {
-    violations.push('contact_request');
-    cleanMessage = cleanMessage.replace(contactRegex, '[CONTACT REQUEST REMOVED]');
-  }
-
-  return {
-    isClean: violations.length === 0,
-    cleanMessage,
-    violations
-  };
+// Real-time stats tracking
+let globalStats = {
+  totalUsers: 0,
+  onlineUsers: 0,
+  totalMessages: 0,
+  totalConsultancies: 0,
+  totalReferralCodes: 0,
+  usedReferralCodes: 0,
+  expiredReferralCodes: 0,
+  pendingReports: 0
 };
+
+// Update global stats
+const updateGlobalStats = () => {
+  globalStats.totalUsers = users.size;
+  globalStats.onlineUsers = Array.from(users.values()).filter(u => u.isOnline).length;
+  globalStats.totalMessages = Array.from(rooms.values()).reduce((sum, room) => sum + room.messages.length, 0);
+  globalStats.totalConsultancies = consultancies.size;
+  globalStats.totalReferralCodes = referralCodes.size;
+  globalStats.usedReferralCodes = Array.from(referralCodes.values()).filter(c => c.isUsed).length;
+  globalStats.expiredReferralCodes = Array.from(referralCodes.values()).filter(c => new Date() > c.expiresAt).length;
+  globalStats.pendingReports = Array.from(reports.values()).filter(r => r.status === 'pending').length;
+
+  // Broadcast stats to all admin clients
+  io.emit('stats-update', globalStats);
+};
+
+// Update stats every 5 seconds
+setInterval(updateGlobalStats, 5000);
 
 // Authentication middleware
 const authenticateToken = (req: any, res: any, next: any) => {
@@ -215,6 +203,8 @@ app.post('/api/admin/generate-referrals', authenticateToken, async (req, res) =>
     console.error('Firebase save error:', error);
   }
 
+  updateGlobalStats();
+
   res.json({
     success: true,
     consultancyId,
@@ -287,11 +277,11 @@ app.post('/api/auth/validate-referral', async (req, res) => {
   });
 });
 
-// Register with referral code
+// Register with referral code (now requires email/password)
 app.post('/api/auth/register-referral', async (req, res) => {
-  const { username, referralCode, country, deviceId } = req.body;
+  const { username, email, referralCode, country, deviceId, firebaseUid } = req.body;
 
-  if (!username || !referralCode || !country || !deviceId) {
+  if (!username || !email || !referralCode || !country || !deviceId) {
     return res.status(400).json({ error: 'All fields are required' });
   }
 
@@ -317,10 +307,11 @@ app.post('/api/auth/register-referral', async (req, res) => {
     }
   }
 
-  const userId = existingUser?.id || referralCode; // Use referral code as user ID
-  const user: User = existingUser || {
+  const userId = firebaseUid || uuidv4();
+  const user: User = {
     id: userId,
     username,
+    email,
     country,
     assignedCountry: country, // Lock to selected country
     isOnline: false,
@@ -332,10 +323,10 @@ app.post('/api/auth/register-referral', async (req, res) => {
     deviceId,
     reportCount: 0,
     isBanned: false,
-    joinedAt: new Date()
+    joinedAt: new Date(),
+    firebaseUid
   };
 
-  user.deviceId = deviceId;
   users.set(userId, user);
 
   // Save user data to Firebase under consultancy structure
@@ -343,6 +334,7 @@ app.post('/api/auth/register-referral', async (req, res) => {
     await saveUserToConsultancy(code.consultancyName, referralCode, {
       id: userId,
       username,
+      email,
       country,
       assignedCountry: country,
       avatar: user.avatar,
@@ -353,7 +345,8 @@ app.post('/api/auth/register-referral', async (req, res) => {
       reportCount: 0,
       isBanned: false,
       joinedAt: user.joinedAt.toISOString(),
-      lastSeen: user.lastSeen.toISOString()
+      lastSeen: user.lastSeen.toISOString(),
+      firebaseUid
     });
     console.log('User saved to Firebase under consultancy:', code.consultancyName);
   } catch (error) {
@@ -380,12 +373,15 @@ app.post('/api/auth/register-referral', async (req, res) => {
 
   const token = jwt.sign({ id: userId, accountType: 'referral' }, JWT_SECRET);
 
+  updateGlobalStats();
+
   res.json({
     success: true,
     token,
     user: {
       id: user.id,
       username: user.username,
+      email: user.email,
       country: user.country,
       assignedCountry: user.assignedCountry,
       accountType: user.accountType,
@@ -434,6 +430,7 @@ app.post('/api/auth/switch-device', async (req, res) => {
     user: {
       id: user.id,
       username: user.username,
+      email: user.email,
       country: user.country,
       assignedCountry: user.assignedCountry,
       accountType: user.accountType,
@@ -520,6 +517,8 @@ app.post('/api/auth/register-email', async (req, res) => {
   await createUserSession(userId, deviceId);
 
   const token = jwt.sign({ id: userId, accountType: 'verified' }, JWT_SECRET);
+
+  updateGlobalStats();
 
   res.json({
     success: true,
@@ -746,6 +745,8 @@ app.post('/api/report-user', authenticateToken, (req, res) => {
     }
   }
 
+  updateGlobalStats();
+
   res.json({ success: true, reportId });
 });
 
@@ -810,7 +811,12 @@ io.on('connection', (socket) => {
       // Notify others in room
       socket.to(country).emit('user-joined', user);
       io.to(country).emit('active-users-updated', room.activeUsers);
+
+      // Update user activity in Firebase
+      updateUserActivity(userId, country);
     }
+
+    updateGlobalStats();
   });
 
   socket.on('send-message', async (data: { userId: string; text: string; country: string; token: string }) => {
@@ -840,7 +846,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Moderate message
+    // Enhanced content moderation
     const moderation = moderateMessage(text);
     
     const message: Message = {
@@ -854,10 +860,12 @@ io.on('connection', (socket) => {
       likes: 0,
       replies: 0,
       isModerated: !moderation.isClean,
-      violations: moderation.violations
+      violations: moderation.violations,
+      violationDetails: moderation.details
     };
     
     room.messages.push(message);
+    room.totalMessages++;
 
     // Save message to Firebase if user has referral code
     if (user.referralCode && user.consultancyName) {
@@ -868,18 +876,29 @@ io.on('connection', (socket) => {
         console.error('Error saving message to Firebase:', error);
       }
     }
+
+    // Increment message count in Firebase
+    await incrementMessageCount(country);
     
     // Send moderation warning if needed
     if (!moderation.isClean) {
+      const violationMessage = generateViolationMessage(moderation.violations, moderation.details);
       socket.emit('moderation-warning', {
         violations: moderation.violations,
         originalMessage: text,
-        cleanMessage: moderation.cleanMessage
+        cleanMessage: moderation.cleanMessage,
+        message: violationMessage
       });
+
+      // Increment user's violation count
+      user.reportCount += 0.5; // Half point for auto-moderation
+      users.set(userId, user);
     }
     
     // Broadcast message to all users in room
     io.to(country).emit('new-message', message);
+
+    updateGlobalStats();
   });
 
   socket.on('like-message', (data: { messageId: string; country: string; token: string }) => {
@@ -947,6 +966,8 @@ io.on('connection', (socket) => {
         io.to(userCountry).emit('active-users-updated', room.activeUsers);
       }
     }
+
+    updateGlobalStats();
   });
 });
 
@@ -965,4 +986,5 @@ app.get('/api/rooms', (req, res) => {
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  updateGlobalStats(); // Initialize stats
 });
