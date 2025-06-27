@@ -5,7 +5,7 @@ import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { ReferralCode, Consultancy, User, Report, DeviceSession } from './models/ReferralCode.js';
+import { ReferralCode, Consultancy, User, Report, DeviceSession } from './models/ReferralCode.ts';
 import { 
   adminDb, 
   adminAuth, 
@@ -24,8 +24,8 @@ import {
   updateUserActivity,
   incrementMessageCount,
   updateRoomStats
-} from './services/firebaseService.js';
-import { moderateMessage, generateViolationMessage } from './utils/contentModeration.js';
+} from './services/firebaseService.ts';
+import { moderateMessage, generateViolationMessage } from './utils/contentModeration.ts';
 
 const app = express();
 const server = createServer(app);
