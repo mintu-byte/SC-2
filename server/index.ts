@@ -3,7 +3,6 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { ReferralCode, Consultancy, User, Report, DeviceSession } from './models/ReferralCode.ts';
 import { 
@@ -143,6 +142,45 @@ const authenticateToken = (req: any, res: any, next: any) => {
     next();
   });
 };
+
+// Admin login - Fixed endpoint
+app.post('/api/auth/admin-login', (req, res) => {
+  try {
+    const { username, password, type } = req.body;
+
+    console.log('Admin login attempt:', { username, type });
+
+    // Hardcoded admin credentials (in production, use proper authentication)
+    const adminCredentials = {
+      admin: { username: 'admin', password: 'admin123' },
+      founder: { username: 'founder', password: 'founder123' }
+    };
+
+    const creds = adminCredentials[type as keyof typeof adminCredentials];
+    if (!creds || username !== creds.username || password !== creds.password) {
+      console.log('Invalid credentials for:', { username, type });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const userId = uuidv4();
+    const token = jwt.sign({ id: userId, accountType: type }, JWT_SECRET);
+
+    console.log('Admin login successful:', { username, type, userId });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: userId,
+        username,
+        accountType: type
+      }
+    });
+  } catch (error) {
+    console.error('Admin login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Generate referral codes for consultancy
 app.post('/api/admin/generate-referrals', authenticateToken, async (req, res) => {
@@ -620,87 +658,68 @@ app.post('/api/auth/upload-visa', authenticateToken, async (req, res) => {
   });
 });
 
-// Admin login
-app.post('/api/auth/admin-login', (req, res) => {
-  const { username, password, type } = req.body;
-
-  // Hardcoded admin credentials (in production, use proper authentication)
-  const adminCredentials = {
-    admin: { username: 'admin', password: 'admin123' },
-    founder: { username: 'founder', password: 'founder123' }
-  };
-
-  const creds = adminCredentials[type as keyof typeof adminCredentials];
-  if (!creds || username !== creds.username || password !== creds.password) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  const userId = uuidv4();
-  const token = jwt.sign({ id: userId, accountType: type }, JWT_SECRET);
-
-  res.json({
-    success: true,
-    token,
-    user: {
-      id: userId,
-      username,
-      accountType: type
-    }
-  });
-});
-
 // Get dashboard stats (live data)
 app.get('/api/admin/stats', authenticateToken, (req, res) => {
-  const totalUsers = users.size;
-  const onlineUsers = Array.from(users.values()).filter(u => u.isOnline).length;
-  const totalMessages = Array.from(rooms.values()).reduce((sum, room) => sum + room.messages.length, 0);
-  const totalConsultancies = consultancies.size;
-  const totalReferralCodes = referralCodes.size;
-  const usedReferralCodes = Array.from(referralCodes.values()).filter(c => c.isUsed).length;
-  const expiredReferralCodes = Array.from(referralCodes.values()).filter(c => new Date() > c.expiresAt).length;
-  const pendingReports = Array.from(reports.values()).filter(r => r.status === 'pending').length;
+  try {
+    const totalUsers = users.size;
+    const onlineUsers = Array.from(users.values()).filter(u => u.isOnline).length;
+    const totalMessages = Array.from(rooms.values()).reduce((sum, room) => sum + room.messages.length, 0);
+    const totalConsultancies = consultancies.size;
+    const totalReferralCodes = referralCodes.size;
+    const usedReferralCodes = Array.from(referralCodes.values()).filter(c => c.isUsed).length;
+    const expiredReferralCodes = Array.from(referralCodes.values()).filter(c => new Date() > c.expiresAt).length;
+    const pendingReports = Array.from(reports.values()).filter(r => r.status === 'pending').length;
 
-  const countryStats = countries.map(country => {
-    const room = rooms.get(country.id);
-    const countryUsers = Array.from(users.values()).filter(u => u.assignedCountry === country.id);
-    return {
-      country: country.name,
-      flag: country.flag,
-      activeUsers: room?.activeUsers || 0,
-      totalMessages: room?.messages.length || 0,
-      totalUsers: countryUsers.length,
-      onlineUsers: countryUsers.filter(u => u.isOnline).length
-    };
-  });
+    const countryStats = countries.map(country => {
+      const room = rooms.get(country.id);
+      const countryUsers = Array.from(users.values()).filter(u => u.assignedCountry === country.id);
+      return {
+        country: country.name,
+        flag: country.flag,
+        activeUsers: room?.activeUsers || 0,
+        totalMessages: room?.messages.length || 0,
+        totalUsers: countryUsers.length,
+        onlineUsers: countryUsers.filter(u => u.isOnline).length
+      };
+    });
 
-  res.json({
-    totalUsers,
-    onlineUsers,
-    totalMessages,
-    totalConsultancies,
-    totalReferralCodes,
-    usedReferralCodes,
-    expiredReferralCodes,
-    pendingReports,
-    countryStats
-  });
+    res.json({
+      totalUsers,
+      onlineUsers,
+      totalMessages,
+      totalConsultancies,
+      totalReferralCodes,
+      usedReferralCodes,
+      expiredReferralCodes,
+      pendingReports,
+      countryStats
+    });
+  } catch (error) {
+    console.error('Error getting stats:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Get consultancies with enhanced details
 app.get('/api/admin/consultancies', authenticateToken, (req, res) => {
-  const consultancyList = Array.from(consultancies.values()).map(c => {
-    const codes = c.referralCodes.map(codeStr => referralCodes.get(codeStr)).filter(Boolean);
-    const expiredCodes = codes.filter(code => new Date() > code.expiresAt).length;
-    
-    return {
-      ...c,
-      unusedCodes: c.totalCodes - c.usedCodes,
-      expiredCodes,
-      activeCodes: c.totalCodes - c.usedCodes - expiredCodes
-    };
-  });
+  try {
+    const consultancyList = Array.from(consultancies.values()).map(c => {
+      const codes = c.referralCodes.map(codeStr => referralCodes.get(codeStr)).filter(Boolean);
+      const expiredCodes = codes.filter(code => new Date() > code.expiresAt).length;
+      
+      return {
+        ...c,
+        unusedCodes: c.totalCodes - c.usedCodes,
+        expiredCodes,
+        activeCodes: c.totalCodes - c.usedCodes - expiredCodes
+      };
+    });
 
-  res.json(consultancyList);
+    res.json(consultancyList);
+  } catch (error) {
+    console.error('Error getting consultancies:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Report user
